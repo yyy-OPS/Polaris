@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
+HEAD_REVISION = "e9f0a1b2c3d4"  # interdisciplinary profiles and dedicated libraries
+EXTENSION_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
 PDF_ASSET_REVISION = "c8d9e0f1a2b3"  # Content-addressed PDF assets and grants
@@ -103,6 +104,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "topic_source_libraries",
                     "activities",
                     "direction_libraries",
+                    "interdisciplinary_research_profiles",
                     "projects",
                     "chat_bot_configs",
                     "library_research_digests",
@@ -233,6 +235,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
     # 文献库归属 P10：direction_libraries.is_public 个人/公共
     assert "is_public" in columns["direction_libraries"]
+    assert {
+        "research_mode",
+    } <= columns["projects"]
+    assert {
+        "library_kind",
+        "interdisciplinary_domains",
+        "interdisciplinary_project_id",
+    } <= columns["direction_libraries"]
+    assert {
+        "project_id",
+        "version",
+        "status",
+        "research_scope",
+        "core_questions",
+        "primary_domain",
+        "related_domains",
+        "created_by",
+    } <= columns["interdisciplinary_research_profiles"]
+    assert "uq_direction_libraries_interdisciplinary_project" in _index_names(
+        db_path, "direction_libraries"
+    )
     # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
@@ -441,6 +464,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "asset_grants"
     ]
 
+    assert {
+        "project_id",
+        "version",
+        "status",
+        "primary_domain",
+        "related_domains",
+    } <= columns["interdisciplinary_research_profiles"]
+
     assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
         "paper_content_versions"
     ]
@@ -462,6 +493,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     } <= columns["paper_evidence_anchors"]
 
     assert {"download_api_keys", "download_batches", "download_batch_items"} <= columns["_tables"]
+
+    # 先退掉跨学科档案迁移，回到下载批次协议版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == EXTENSION_REVISION
+    assert "interdisciplinary_research_profiles" not in columns["_tables"]
+    assert "interdisciplinary_project_id" not in columns["direction_libraries"]
 
     # 先退掉下载批次协议迁移，回到证据锚点版本。
     command.downgrade(cfg, "-1")
