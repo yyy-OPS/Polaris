@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e9f0a1b2c3d4"  # interdisciplinary profiles and dedicated libraries
+HEAD_REVISION = "f0a1b2c3d4e5"  # interdisciplinary retrieval matrix
+PROFILE_REVISION = "e9f0a1b2c3d4"  # interdisciplinary research profile
 EXTENSION_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
@@ -470,6 +471,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "status",
         "primary_domain",
         "related_domains",
+        "query_matrix",
+        "evidence_balance",
     } <= columns["interdisciplinary_research_profiles"]
 
     assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
@@ -494,7 +497,13 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
 
     assert {"download_api_keys", "download_batches", "download_batch_items"} <= columns["_tables"]
 
-    # 先退掉跨学科档案迁移，回到下载批次协议版本。
+    # 先退掉跨学科检索矩阵迁移，回到跨学科档案版本。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == PROFILE_REVISION
+    assert "query_matrix" not in columns["interdisciplinary_research_profiles"]
+
+    # 再退掉跨学科档案迁移，回到下载批次协议版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
     assert version == EXTENSION_REVISION
