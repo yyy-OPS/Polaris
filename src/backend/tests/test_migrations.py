@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "d1e2f3a4b5c6"  # Persistent OA cache and promotion audit
+HEAD_REVISION = "e9f0a1b2c3d4"  # interdisciplinary profiles and dedicated libraries
 EXTENSION_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
@@ -104,6 +104,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "topic_source_libraries",
                     "activities",
                     "direction_libraries",
+                    "interdisciplinary_research_profiles",
                     "projects",
                     "chat_bot_configs",
                     "library_research_digests",
@@ -236,6 +237,27 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     assert {"status", "review_note", "submitted_by"} <= columns["direction_libraries"]
     # 文献库归属 P10：direction_libraries.is_public 个人/公共
     assert "is_public" in columns["direction_libraries"]
+    assert {
+        "research_mode",
+    } <= columns["projects"]
+    assert {
+        "library_kind",
+        "interdisciplinary_domains",
+        "interdisciplinary_project_id",
+    } <= columns["direction_libraries"]
+    assert {
+        "project_id",
+        "version",
+        "status",
+        "research_scope",
+        "core_questions",
+        "primary_domain",
+        "related_domains",
+        "created_by",
+    } <= columns["interdisciplinary_research_profiles"]
+    assert "uq_direction_libraries_interdisciplinary_project" in _index_names(
+        db_path, "direction_libraries"
+    )
     # P9e：课题 statement 上列；project.definition / projects.ingest_state 退役删列
     assert "statement" in columns["projects"]
     assert "definition" not in columns["projects"]
@@ -445,6 +467,14 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
     ]
     assert {"hit_id", "status", "blob_id", "attempt_count"} <= columns["literature_oa_caches"]
     assert {"cache_id", "url", "status"} <= columns["literature_oa_attempts"]
+
+    assert {
+        "project_id",
+        "version",
+        "status",
+        "primary_domain",
+        "related_domains",
+    } <= columns["interdisciplinary_research_profiles"]
 
     assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
         "paper_content_versions"
