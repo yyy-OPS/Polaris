@@ -36,6 +36,7 @@ from app.schemas.literature_discovery import (
 from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
 from app.services.literature import discovery_runs, oa_cache
+from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)
@@ -88,6 +89,13 @@ async def create_run(
     }
     # Provider credentials are resolved by the worker and must never enter a run snapshot.
     source_config.pop("provider_keys", None)
+    query_plan = await apply_profile_to_query_plan(
+        session,
+        library=library,
+        topic=data.topic,
+        query_plan=data.query_plan,
+        source_config=source_config,
+    )
     run = LiteratureSearchRun(
         library_id=library.id,
         created_by=user.id,
@@ -96,14 +104,14 @@ async def create_run(
         start_year=start_year,
         end_year=end_year,
         topic=data.topic,
-        query_plan=data.query_plan,
+        query_plan=query_plan,
         source_config=source_config,
         model_version=data.model_version,
         progress={"phase": "queued", "fetched": 0, "accepted": 0},
     )
     session.add(run)
     await session.flush()
-    for source in discovery_runs.enabled_sources(source_config, data.query_plan):
+    for source in discovery_runs.enabled_sources(source_config, query_plan):
         session.add(
             LiteratureSourceAttempt(
                 run_id=run.id,

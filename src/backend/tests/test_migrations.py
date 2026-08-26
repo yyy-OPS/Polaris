@@ -9,7 +9,8 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "e9f0a1b2c3d4"  # interdisciplinary profiles and dedicated libraries
+HEAD_REVISION = "f0a1b2c3d4e5"  # interdisciplinary retrieval matrix
+PROFILE_REVISION = "e9f0a1b2c3d4"  # interdisciplinary research profile
 EXTENSION_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
 CONTENT_VERSION_REVISION = "d9e0f1a2b3c4"  # Versioned parsed PDF content and vectors
@@ -119,6 +120,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_search_runs",
                     "literature_search_hits",
                     "literature_source_attempts",
+<<<<<<< HEAD
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
@@ -132,6 +134,9 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "download_batch_items",
                     "literature_oa_caches",
                     "literature_oa_attempts",
+=======
+                    "interdisciplinary_research_profiles",
+>>>>>>> d86994e (feat(interdisciplinary): orchestrate discipline-aware retrieval)
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
@@ -474,6 +479,8 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
         "status",
         "primary_domain",
         "related_domains",
+        "query_matrix",
+        "evidence_balance",
     } <= columns["interdisciplinary_research_profiles"]
 
     assert {"paper_id", "asset_id", "version_no", "parser", "status", "is_current"} <= columns[
@@ -498,11 +505,19 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
 
     assert {"download_api_keys", "download_batches", "download_batch_items"} <= columns["_tables"]
 
-    # 先退掉 OA 缓存迁移，回到扩展下载批次协议版本。
+    # 先退掉跨学科检索矩阵迁移，回到跨学科档案版本。
     command.downgrade(cfg, "-1")
     version, columns = _inspect_db(db_path)
-    assert version == EXTENSION_REVISION
-    assert not {"literature_oa_caches", "literature_oa_attempts"} & columns["_tables"]
+    assert version == PROFILE_REVISION
+    assert "query_matrix" not in columns["interdisciplinary_research_profiles"]
+    assert "literature_search_runs" in columns["_tables"]
+
+    # 跨学科档案回退后，基础文献发现合同仍保留。
+    command.downgrade(cfg, "-1")
+    version, columns = _inspect_db(db_path)
+    assert version == LITERATURE_REVISION
+    assert "interdisciplinary_research_profiles" not in columns["_tables"]
+    assert "interdisciplinary_project_id" not in columns["direction_libraries"]
 
     # 先退掉下载批次协议迁移，回到证据锚点版本。
     command.downgrade(cfg, "-1")
