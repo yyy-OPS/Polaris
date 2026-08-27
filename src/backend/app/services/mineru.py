@@ -7,7 +7,8 @@ import io
 import re
 import zipfile
 from collections.abc import Awaitable, Callable, Mapping
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from threading import Lock
 from typing import Any
 
 import httpx
@@ -20,6 +21,34 @@ class MineruCloudError(RuntimeError):
 
 
 StatusCallback = Callable[[str], Awaitable[None]]
+_SCHEDULERS_LOCK = Lock()
+_MAX_ARCHIVE_FILES = 10_000
+_MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
+
+
+class _MineruScheduler:
+    def __init__(self, tokens: list[str], concurrency: int) -> None:
+        self.tokens = tuple(tokens)
+        self.semaphore = asyncio.Semaphore(concurrency)
+        self._index = 0
+        self._lock = Lock()
+
+    def next_token(self) -> str:
+        if not self.tokens:
+            raise MineruCloudError("MINERU_NOT_CONFIGURED")
+        with self._lock:
+            token = self.tokens[self._index % len(self.tokens)]
+            self._index += 1
+        return token
+
+
+_SCHEDULERS: dict[tuple[tuple[str, ...], int], _MineruScheduler] = {}
+
+
+def _scheduler(tokens: list[str], concurrency: int) -> _MineruScheduler:
+    key = (tuple(tokens), concurrency)
+    with _SCHEDULERS_LOCK:
+        return _SCHEDULERS.setdefault(key, _MineruScheduler(tokens, concurrency))
 
 
 def _tokens(raw: str) -> list[str]:
@@ -43,7 +72,27 @@ def _result_payload(payload: Any) -> Mapping[str, Any] | None:
     return None
 
 
-def _markdown_result(markdown: str, *, pages: int = 0) -> dict[str, Any]:
+def _safe_archive_name(name: str) -> str | None:
+    path = PurePosixPath(name.replace("\\", "/"))
+    if path.is_absolute() or not path.parts or ".." in path.parts:
+        return None
+    return path.as_posix()
+
+
+def _decode_markdown(content: bytes) -> str:
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise MineruCloudError("MINERU_MARKDOWN_ENCODING_INVALID") from exc
+
+
+def _markdown_result(
+    markdown: str,
+    *,
+    pages: int = 0,
+    markdown_path: str = "content.md",
+    artifacts: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     text = re.sub(r"\n{3,}", "\n\n", markdown.replace("\r\n", "\n")).strip()
     if not text:
         raise MineruCloudError("MINERU_MARKDOWN_EMPTY")
@@ -66,6 +115,9 @@ def _markdown_result(markdown: str, *, pages: int = 0) -> dict[str, Any]:
                 "anchor_meta": {"parser": "mineru"},
             }
         )
+    artifacts = artifacts or []
+    images = [item["path"] for item in artifacts if item["kind"] == "image"]
+    tables = [item["path"] for item in artifacts if item["kind"] == "table"]
     return {
         "parser": "mineru",
         "parser_version": "cloud",
@@ -73,8 +125,70 @@ def _markdown_result(markdown: str, *, pages: int = 0) -> dict[str, Any]:
         "text": text,
         "pages": pages or current_page,
         "chunks": chunks,
-        "manifest": {"pages": pages or current_page, "images": [], "tables": []},
+        "markdown_path": markdown_path,
+        "artifacts": artifacts,
+        "manifest": {"pages": pages or current_page, "images": images, "tables": tables},
     }
+
+
+def _zip_result(content: bytes, *, pages: int = 0) -> dict[str, Any]:
+    if len(content) > _MAX_ARCHIVE_BYTES:
+        raise MineruCloudError("MINERU_ARCHIVE_TOO_LARGE")
+    with zipfile.ZipFile(io.BytesIO(content)) as bundle:
+        files: list[tuple[str, bytes]] = []
+        infos = bundle.infolist()
+        if len(infos) > _MAX_ARCHIVE_FILES:
+            raise MineruCloudError("MINERU_ARCHIVE_TOO_MANY_FILES")
+        extracted_bytes = 0
+        accepted_extensions = {
+            ".md",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".webp",
+            ".svg",
+            ".csv",
+            ".html",
+            ".htm",
+            ".xlsx",
+        }
+        for info in infos:
+            name = _safe_archive_name(info.filename)
+            if (
+                name is None
+                or info.is_dir()
+                or PurePosixPath(name).suffix.lower() not in accepted_extensions
+            ):
+                continue
+            extracted_bytes += info.file_size
+            if extracted_bytes > _MAX_ARCHIVE_BYTES:
+                raise MineruCloudError("MINERU_ARCHIVE_TOO_LARGE")
+            files.append((name, bundle.read(info)))
+    markdown_files = [(name, data) for name, data in files if name.lower().endswith(".md")]
+    if not markdown_files:
+        raise MineruCloudError("MINERU_MARKDOWN_MISSING")
+    markdown_name, markdown_bytes = max(markdown_files, key=lambda item: len(item[1]))
+    image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+    table_extensions = {".csv", ".html", ".htm", ".xlsx"}
+    artifacts: list[dict[str, Any]] = []
+    for name, data in files:
+        suffix = PurePosixPath(name).suffix.lower()
+        kind = (
+            "image"
+            if suffix in image_extensions
+            else "table"
+            if suffix in table_extensions
+            else None
+        )
+        if kind is not None:
+            artifacts.append({"path": name, "kind": kind, "content": data})
+    return _markdown_result(
+        _decode_markdown(markdown_bytes),
+        pages=pages,
+        markdown_path=markdown_name,
+        artifacts=artifacts,
+    )
 
 
 class MineruCloudParser:
@@ -86,19 +200,14 @@ class MineruCloudParser:
         self._client = client or httpx.AsyncClient(timeout=settings.mineru_timeout_seconds)
         self._owns_client = client is None
         self._tokens = _tokens(settings.mineru_api_tokens)
-        self._token_index = 0
-        self._semaphore = asyncio.Semaphore(settings.mineru_concurrency)
+        self._scheduler = _scheduler(self._tokens, settings.mineru_concurrency)
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
     def _next_token(self) -> str:
-        if not self._tokens:
-            raise MineruCloudError("MINERU_NOT_CONFIGURED")
-        token = self._tokens[self._token_index % len(self._tokens)]
-        self._token_index += 1
-        return token
+        return self._scheduler.next_token()
 
     async def _json(self, method: str, url: str, *, token: str, **kwargs: Any) -> Any:
         last: Exception | None = None
@@ -121,7 +230,7 @@ class MineruCloudParser:
     async def parse(
         self, pdf_path: Path, *, on_status: StatusCallback | None = None
     ) -> dict[str, Any]:
-        async with self._semaphore:
+        async with self._scheduler.semaphore:
             token = self._next_token()
             if on_status:
                 await on_status("mineru_uploading")
@@ -166,26 +275,17 @@ class MineruCloudParser:
                             md_response = await self._client.get(str(markdown_url))
                             md_response.raise_for_status()
                             return _markdown_result(
-                                md_response.text,
+                                _decode_markdown(md_response.content),
                                 pages=int(_find(row, "page_count", "pageCount") or 0),
                             )
                         zip_url = _find(row, "full_zip_url", "fullZipUrl", "zip_url", "zipUrl")
                         if zip_url:
                             archive = await self._client.get(str(zip_url))
                             archive.raise_for_status()
-                            with zipfile.ZipFile(io.BytesIO(archive.content)) as bundle:
-                                md_name = next(
-                                    (
-                                        name
-                                        for name in bundle.namelist()
-                                        if name.lower().endswith(".md")
-                                    ),
-                                    None,
-                                )
-                                if md_name:
-                                    return _markdown_result(
-                                        bundle.read(md_name).decode("utf-8", errors="replace")
-                                    )
+                            return _zip_result(
+                                archive.content,
+                                pages=int(_find(row, "page_count", "pageCount") or 0),
+                            )
                         raise MineruCloudError("MINERU_RESULT_URL_MISSING")
                     if state in {"failed", "error", "failure"}:
                         raise MineruCloudError(
