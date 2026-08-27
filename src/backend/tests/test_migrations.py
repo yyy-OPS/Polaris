@@ -502,52 +502,22 @@ def test_migrations_sqlite_upgrade_head_and_roundtrip(tmp_path):
 
     assert {"download_api_keys", "download_batches", "download_batch_items"} <= columns["_tables"]
 
-    # 先退掉跨学科检索矩阵迁移，回到跨学科档案版本。
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == PROFILE_REVISION
-    assert "query_matrix" not in columns["interdisciplinary_research_profiles"]
-    assert "literature_search_runs" in columns["_tables"]
-
-    # 跨学科档案回退后，基础文献发现合同仍保留。
-    command.downgrade(cfg, "-1")
+    # 合并 head 直接回退到文献发现合同，避免 merge revision 使用 -1 时存在歧义。
+    command.downgrade(cfg, LITERATURE_REVISION)
     version, columns = _inspect_db(db_path)
     assert version == LITERATURE_REVISION
-    assert "interdisciplinary_research_profiles" not in columns["_tables"]
-    assert "interdisciplinary_project_id" not in columns["direction_libraries"]
-
-    # 先退掉下载批次协议迁移，回到证据锚点版本。
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == EVIDENCE_ANCHOR_REVISION
     assert not {
-        "download_api_keys",
+        "interdisciplinary_research_profiles",
+        "literature_oa_caches",
+        "literature_oa_attempts",
+        "pdf_blobs",
+        "paper_assets",
+        "asset_grants",
+        "paper_content_versions",
+        "paper_evidence_anchors",
         "download_batches",
         "download_batch_items",
     } & columns["_tables"]
-
-    # 再退掉证据锚点迁移，回到解析内容版本。
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == CONTENT_VERSION_REVISION
-    assert "paper_evidence_anchors" not in columns["_tables"]
-
-    # 再退掉解析内容版本迁移，回到 PDF 资产版本。
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == PDF_ASSET_REVISION
-    assert not {
-        "paper_content_versions",
-        "paper_content_chunks",
-        "paper_content_version_vectors",
-        "paper_content_chunk_vectors",
-    } & columns["_tables"]
-
-    # 再退掉 PDF 资产迁移，回到文献发现合同版本。
-    command.downgrade(cfg, "-1")
-    version, columns = _inspect_db(db_path)
-    assert version == LITERATURE_REVISION
-    assert not {"pdf_blobs", "paper_assets", "asset_grants"} & columns["_tables"]
 
     # 再退掉文献发现合同，回到集成令牌版本。
     command.downgrade(cfg, "-1")

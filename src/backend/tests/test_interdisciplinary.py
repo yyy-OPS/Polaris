@@ -105,7 +105,8 @@ async def test_scope_confirmation_creates_one_dedicated_library(client):
     assert body["requested_count"] == 50
     assert body["candidate_budget"] == 80
     assert body["start_year"] == 2016
-    assert body["query_plan"]["interdisciplinary"]["profile_version"] == 1
+    expected_version = confirmed.json()["profile"]["version"]
+    assert body["query_plan"]["interdisciplinary"]["profile_version"] == expected_version
     queries = body["query_plan"]["queries"]
     assert {item["source"] for item in queries} == {"openalex", "pubmed"}
     assert {item["role"] for item in queries} >= {"primary", "related", "bridge"}

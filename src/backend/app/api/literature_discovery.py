@@ -35,8 +35,8 @@ from app.schemas.literature_discovery import (
 )
 from app.services import libraries as libraries_service
 from app.services import literature_settings as literature_settings_service
-from app.services.literature import discovery_runs, oa_cache
 from app.services.interdisciplinary_retrieval import apply_profile_to_query_plan
+from app.services.literature import discovery_runs, oa_cache
 
 router = APIRouter(tags=["literature-discovery"])
 logger = logging.getLogger(__name__)

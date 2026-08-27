@@ -451,6 +451,7 @@ async def run_discovery(
             source_candidates: list[LiteratureCandidate] = []
             source_fetched = 0
             channel_failures: list[dict[str, str]] = []
+            channel_errors: list[SourceExecutionError] = []
             per_query_limit = max(1, run.candidate_budget // len(planned_queries))
             for planned in planned_queries:
                 try:
@@ -463,8 +464,15 @@ async def run_discovery(
                         )
                     )
                 except Exception as exc:  # noqa: BLE001 - isolate channel failures
+                    if isinstance(exc, ProviderRequestError):
+                        channel_errors.append(
+                            SourceExecutionError(exc.code, str(exc), retryable=exc.retryable)
+                        )
+                        error_name = exc.code
+                    else:
+                        error_name = type(exc).__name__
                     channel_failures.append(
-                        {"channel_id": planned["channel_id"], "error": type(exc).__name__}
+                        {"channel_id": planned["channel_id"], "error": error_name}
                     )
                     continue
                 source_fetched += page.fetched_count
@@ -482,6 +490,8 @@ async def run_discovery(
                     )
                     source_candidates.append(candidate.model_copy(update={"metadata": metadata}))
             if not source_candidates and channel_failures:
+                if len(channel_errors) == len(channel_failures) == 1:
+                    raise channel_errors[0]
                 raise SourceExecutionError(
                     "SOURCE_CHANNELS_FAILED",
                     f"All {len(planned_queries)} query channels failed",

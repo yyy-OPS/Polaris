@@ -176,4 +176,6 @@ def test_migration_upgrade_and_downgrade_roundtrip(tmp_path: Path) -> None:
             "PRAGMA foreign_key_list('paper_evidence_anchors')"
         ).fetchall()
     assert any(row[2] == "paper_content_chunks" for row in foreign_keys)
-    command.downgrade(cfg, "-1")
+    # Merge head has two parents; use the explicit common ancestor instead of
+    # ambiguous relative downgrade.
+    command.downgrade(cfg, "e0f1a2b3c4d5")
