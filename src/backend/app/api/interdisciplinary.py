@@ -10,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import current_active_user
 from app.core.db import get_session
-from app.models.interdisciplinary import InterdisciplinaryResearchProfile
+from app.models.interdisciplinary import (
+    InterdisciplinaryResearchProfile,
+    InterdisciplinaryResearchProfileVersion,
+)
 from app.models.library_direction import DirectionLibrary, TopicSourceLibrary
 from app.models.project import Project
 from app.models.user import User
@@ -18,16 +21,29 @@ from app.schemas.interdisciplinary import (
     InterdisciplinaryConfirmation,
     InterdisciplinaryScopeDraft,
     InterdisciplinaryScopeRead,
+    InterdisciplinaryScopeSuggestion,
+    InterdisciplinaryScopeSuggestRequest,
 )
+from app.services import interdisciplinary_scope as scope_service
 from app.services import libraries as libraries_service
 from app.services import projects as projects_service
 
 router = APIRouter(prefix="/projects/{project_id}/interdisciplinary", tags=["interdisciplinary"])
+suggestion_router = APIRouter(tags=["interdisciplinary"])
 
 
-async def _managed_project(
-    session: AsyncSession, project_id: uuid.UUID, user: User
-) -> Project:
+@suggestion_router.post(
+    "/projects/interdisciplinary-scope/suggest",
+    response_model=InterdisciplinaryScopeSuggestion,
+)
+async def suggest_interdisciplinary_scope(
+    data: InterdisciplinaryScopeSuggestRequest,
+    user: User = Depends(current_active_user),
+) -> InterdisciplinaryScopeSuggestion:
+    return await scope_service.suggest_scope(data, user_id=user.id)
+
+
+async def _managed_project(session: AsyncSession, project_id: uuid.UUID, user: User) -> Project:
     project = await projects_service.get_project(session, project_id=project_id, user_id=user.id)
     if project is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="PROJECT_NOT_FOUND")
@@ -59,6 +75,27 @@ async def get_interdisciplinary_scope(
     return InterdisciplinaryScopeRead.model_validate(await _profile(session, project_id))
 
 
+@router.get("/scope/versions", response_model=list[InterdisciplinaryScopeRead])
+async def list_interdisciplinary_scope_versions(
+    project_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_active_user),
+) -> list[InterdisciplinaryScopeRead]:
+    await _managed_project(session, project_id, user)
+    versions = list(
+        (
+            await session.execute(
+                select(InterdisciplinaryResearchProfileVersion)
+                .where(InterdisciplinaryResearchProfileVersion.project_id == project_id)
+                .order_by(InterdisciplinaryResearchProfileVersion.version.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [InterdisciplinaryScopeRead.model_validate(version) for version in versions]
+
+
 @router.put("/scope", response_model=InterdisciplinaryScopeRead)
 async def save_interdisciplinary_scope(
     project_id: uuid.UUID,
@@ -68,9 +105,9 @@ async def save_interdisciplinary_scope(
 ) -> InterdisciplinaryScopeRead:
     project = await _managed_project(session, project_id, user)
     profile = await session.scalar(
-        select(InterdisciplinaryResearchProfile).where(
-            InterdisciplinaryResearchProfile.project_id == project.id
-        )
+        select(InterdisciplinaryResearchProfile)
+        .where(InterdisciplinaryResearchProfile.project_id == project.id)
+        .with_for_update()
     )
     if profile is None:
         profile = InterdisciplinaryResearchProfile(
@@ -93,6 +130,23 @@ async def save_interdisciplinary_scope(
     profile.validation_conditions = data.validation_conditions
     profile.user_questions = data.user_questions
     project.research_mode = "interdisciplinary"
+    await session.flush()
+    session.add(
+        InterdisciplinaryResearchProfileVersion(
+            profile_id=profile.id,
+            project_id=profile.project_id,
+            version=profile.version,
+            status=profile.status,
+            research_scope=profile.research_scope,
+            core_questions=list(profile.core_questions),
+            primary_domain=profile.primary_domain,
+            related_domains=list(profile.related_domains),
+            evidence_boundary=profile.evidence_boundary,
+            validation_conditions=profile.validation_conditions,
+            user_questions=profile.user_questions,
+            created_by=user.id,
+        )
+    )
     await session.commit()
     await session.refresh(profile)
     return InterdisciplinaryScopeRead.model_validate(profile)
@@ -114,6 +168,16 @@ async def confirm_interdisciplinary_scope(
     profile.confirmed_by = user.id
     profile.confirmed_at = datetime.now(UTC)
     project.research_mode = "interdisciplinary"
+    version = await session.scalar(
+        select(InterdisciplinaryResearchProfileVersion).where(
+            InterdisciplinaryResearchProfileVersion.profile_id == profile.id,
+            InterdisciplinaryResearchProfileVersion.version == profile.version,
+        )
+    )
+    if version is not None:
+        version.status = "confirmed"
+        version.confirmed_by = user.id
+        version.confirmed_at = profile.confirmed_at
 
     library = await session.scalar(
         select(DirectionLibrary).where(

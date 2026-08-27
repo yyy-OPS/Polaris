@@ -27,9 +27,9 @@ def upgrade() -> None:
         batch.add_column(sa.Column("interdisciplinary_domains", _JSON, nullable=True))
         batch.add_column(
             sa.Column(
-            "interdisciplinary_project_id",
-            sa.Uuid(),
-            nullable=True,
+                "interdisciplinary_project_id",
+                sa.Uuid(),
+                nullable=True,
             )
         )
         batch.create_foreign_key(
@@ -81,9 +81,63 @@ def upgrade() -> None:
         "interdisciplinary_research_profiles",
         ["project_id"],
     )
+    op.create_table(
+        "interdisciplinary_research_profile_versions",
+        sa.Column("id", sa.Uuid(), primary_key=True),
+        sa.Column(
+            "profile_id",
+            sa.Uuid(),
+            sa.ForeignKey("interdisciplinary_research_profiles.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "project_id",
+            sa.Uuid(),
+            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("version", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(16), nullable=False, server_default="draft"),
+        sa.Column("research_scope", sa.Text(), nullable=False),
+        sa.Column("core_questions", _JSON, nullable=False),
+        sa.Column("primary_domain", sa.String(255), nullable=False),
+        sa.Column("related_domains", _JSON, nullable=False),
+        sa.Column("evidence_boundary", sa.Text(), nullable=True),
+        sa.Column("validation_conditions", _JSON, nullable=True),
+        sa.Column("user_questions", _JSON, nullable=True),
+        sa.Column(
+            "created_by", sa.Uuid(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column(
+            "confirmed_by", sa.Uuid(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("profile_id", "version", name="uq_interdisciplinary_profile_version"),
+    )
+    op.create_index(
+        "ix_interdisciplinary_research_profile_versions_profile_id",
+        "interdisciplinary_research_profile_versions",
+        ["profile_id"],
+    )
+    op.create_index(
+        "ix_interdisciplinary_research_profile_versions_project_id",
+        "interdisciplinary_research_profile_versions",
+        ["project_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index(
+        "ix_interdisciplinary_research_profile_versions_project_id",
+        table_name="interdisciplinary_research_profile_versions",
+    )
+    op.drop_index(
+        "ix_interdisciplinary_research_profile_versions_profile_id",
+        table_name="interdisciplinary_research_profile_versions",
+    )
+    op.drop_table("interdisciplinary_research_profile_versions")
     op.drop_index(
         "ix_interdisciplinary_research_profiles_project_id",
         table_name="interdisciplinary_research_profiles",

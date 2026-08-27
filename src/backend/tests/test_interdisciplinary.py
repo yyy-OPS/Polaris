@@ -20,6 +20,17 @@ async def test_scope_confirmation_creates_one_dedicated_library(client):
     )
     assert created.status_code == 201, created.text
     project_id = created.json()["id"]
+    suggestion = await client.post(
+        "/api/projects/interdisciplinary-scope/suggest",
+        headers=auth,
+        json={
+            "name": "SAM3-assisted impact response",
+            "statement": "Use SAM3 segmentation to study structural response under impact load.",
+        },
+    )
+    assert suggestion.status_code == 200, suggestion.text
+    assert suggestion.json()["primary_domain"] != "Pending"
+    assert suggestion.json()["related_domains"]
     scope = {
         "research_scope": (
             "Use segmentation observations to explain structural response under dynamic impact."
@@ -38,6 +49,19 @@ async def test_scope_confirmation_creates_one_dedicated_library(client):
     )
     assert saved.status_code == 200, saved.text
     assert saved.json()["status"] == "draft"
+    revised = await client.put(
+        f"/api/projects/{project_id}/interdisciplinary/scope",
+        headers=auth,
+        json={**scope, "research_scope": scope["research_scope"] + " Revised boundary."},
+    )
+    assert revised.status_code == 200, revised.text
+    assert revised.json()["version"] == 2
+    versions = await client.get(
+        f"/api/projects/{project_id}/interdisciplinary/scope/versions", headers=auth
+    )
+    assert versions.status_code == 200, versions.text
+    assert [item["version"] for item in versions.json()] == [2, 1]
+    assert versions.json()[1]["research_scope"] == scope["research_scope"]
     confirmed = await client.post(
         f"/api/projects/{project_id}/interdisciplinary/scope/confirm", headers=auth
     )
