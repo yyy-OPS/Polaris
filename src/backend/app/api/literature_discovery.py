@@ -34,6 +34,7 @@ from app.schemas.literature_discovery import (
     SourceAttemptRead,
 )
 from app.services import libraries as libraries_service
+from app.services import literature_settings as literature_settings_service
 from app.services.literature import discovery_runs, oa_cache
 
 router = APIRouter(tags=["literature-discovery"])
@@ -75,28 +76,40 @@ async def create_run(
     user: User = Depends(current_active_user),
 ) -> SearchRunDetail:
     library = await _managed_library(session, library_id, user)
+    defaults = await literature_settings_service.get_runtime_settings(session)
+    requested_count = data.requested_count or int(defaults["requested_count"])
+    candidate_budget = data.candidate_budget or int(defaults["candidate_budget"])
+    start_year = data.start_year if data.start_year is not None else defaults.get("start_year")
+    end_year = data.end_year if data.end_year is not None else defaults.get("end_year")
+    source_config = {
+        "sources": list(defaults["sources"]),
+        "score_weights": dict(defaults["score_weights"]),
+        **(data.source_config or {}),
+    }
+    # Provider credentials are resolved by the worker and must never enter a run snapshot.
+    source_config.pop("provider_keys", None)
     run = LiteratureSearchRun(
         library_id=library.id,
         created_by=user.id,
-        requested_count=data.requested_count,
-        candidate_budget=data.candidate_budget,
-        start_year=data.start_year,
-        end_year=data.end_year,
+        requested_count=requested_count,
+        candidate_budget=candidate_budget,
+        start_year=start_year,
+        end_year=end_year,
         topic=data.topic,
         query_plan=data.query_plan,
-        source_config=data.source_config,
+        source_config=source_config,
         model_version=data.model_version,
         progress={"phase": "queued", "fetched": 0, "accepted": 0},
     )
     session.add(run)
     await session.flush()
-    for source in discovery_runs.enabled_sources(data.source_config, data.query_plan):
+    for source in discovery_runs.enabled_sources(source_config, data.query_plan):
         session.add(
             LiteratureSourceAttempt(
                 run_id=run.id,
                 source=source,
                 status="pending",
-                requested_count=data.candidate_budget,
+                requested_count=candidate_budget,
             )
         )
     await session.commit()
