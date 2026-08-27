@@ -1,6 +1,7 @@
 """Issue #455: versioned parser lifecycle and vector-state persistence."""
 
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -83,12 +84,80 @@ async def test_reparse_creates_new_current_version_without_mutating_old(app, cli
         second = await create_content_version(session, asset=asset)
         assert second.version_no == first.version_no + 1
         await session.refresh(first)
+        assert first.is_current is True
+        assert second.is_current is False
+        await parse_content_version(session, version=second, mineru_parser=None)
+        await session.refresh(first)
         assert first.is_current is False
         assert second.is_current is True
         saved = await session.scalar(
             select(PaperContentVersion).where(PaperContentVersion.id == first.id)
         )
         assert saved is not None and saved.is_current is False
+
+
+@pytest.mark.asyncio
+async def test_failed_reparse_keeps_previous_content_current(app, client):
+    _user_row, _library, paper, asset = await _setup(client)
+    async with get_sessionmaker()() as session:
+        first = await create_content_version(session, asset=asset, parser="pymupdf")
+        await parse_content_version(session, version=first, mineru_parser=None)
+        replacement = await create_content_version(session, asset=asset)
+
+        async def failing_mineru(_path):
+            raise RuntimeError("mineru unavailable")
+
+        with pytest.raises(ContentParseError, match="MINERU_FAILED"):
+            await parse_content_version(
+                session,
+                version=replacement,
+                mineru_parser=failing_mineru,
+                allow_fallback=False,
+            )
+        await session.refresh(first)
+        await session.refresh(replacement)
+        assert first.is_current is True
+        assert replacement.is_current is False
+        assert (await current_content_version(session, paper_id=paper.id)).id == first.id
+
+
+@pytest.mark.asyncio
+async def test_mineru_artifacts_are_persisted_with_the_content_version(app, client):
+    _user_row, _library, _paper, asset = await _setup(client)
+
+    async def mineru_result(_path):
+        return {
+            "parser": "mineru",
+            "parser_version": "test",
+            "markdown": "# Result\n\n![Figure](images/figure.png)",
+            "markdown_path": "result/paper.md",
+            "text": "Result with a figure.",
+            "pages": 1,
+            "chunks": [{"text": "Result with a figure.", "page_start": 1}],
+            "manifest": {
+                "pages": 1,
+                "images": ["result/images/figure.png"],
+                "tables": [],
+            },
+            "artifacts": [
+                {
+                    "path": "result/images/figure.png",
+                    "kind": "image",
+                    "content": b"image-bytes",
+                }
+            ],
+        }
+
+    async with get_sessionmaker()() as session:
+        version = await create_content_version(session, asset=asset)
+        parsed = await parse_content_version(
+            session, version=version, mineru_parser=mineru_result
+        )
+
+    markdown_path = Path(parsed.markdown_key)
+    assert markdown_path.as_posix().endswith("/result/paper.md")
+    assert markdown_path.read_text(encoding="utf-8").startswith("# Result")
+    assert (markdown_path.parent / "images" / "figure.png").read_bytes() == b"image-bytes"
 
 
 @pytest.mark.asyncio
