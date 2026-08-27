@@ -9,7 +9,7 @@ from alembic import command
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
-HEAD_REVISION = "f0a1b2c3d4e5"  # interdisciplinary retrieval matrix
+HEAD_REVISION = "fa1b2c3d4e5f"  # OA cache and interdisciplinary retrieval heads merged
 PROFILE_REVISION = "e9f0a1b2c3d4"  # interdisciplinary research profile
 EXTENSION_REVISION = "e0f1a2b3c4d5"  # Polaris extension download batches and API keys
 EVIDENCE_ANCHOR_REVISION = "e5f6a7b8c9d0"  # Version-aware sentence/paragraph evidence anchors
@@ -120,7 +120,6 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "literature_search_runs",
                     "literature_search_hits",
                     "literature_source_attempts",
-<<<<<<< HEAD
                     "pdf_blobs",
                     "paper_assets",
                     "asset_grants",
@@ -134,9 +133,7 @@ def _inspect_db(db_path: Path) -> tuple[str, dict[str, set[str]]]:
                     "download_batch_items",
                     "literature_oa_caches",
                     "literature_oa_attempts",
-=======
                     "interdisciplinary_research_profiles",
->>>>>>> d86994e (feat(interdisciplinary): orchestrate discipline-aware retrieval)
                 )
                 if table in tables  # downgrade 后新表不存在，跳过列检查
             }
