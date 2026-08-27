@@ -16,6 +16,18 @@ class InterdisciplinaryScopeDraft(BaseModel):
     user_questions: list[dict] | None = Field(default=None, max_length=12)
 
 
+class InterdisciplinaryScopeSuggestRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    statement: str = Field(min_length=5, max_length=2000)
+    user_context: str | None = Field(default=None, max_length=4000)
+
+
+class InterdisciplinaryScopeSuggestion(InterdisciplinaryScopeDraft):
+    clarification_questions: list[str] = Field(default_factory=list, max_length=4)
+    rationale: str = Field(min_length=1, max_length=4000)
+    model: str
+
+
 class InterdisciplinaryScopeRead(InterdisciplinaryScopeDraft):
     model_config = ConfigDict(from_attributes=True)
 
@@ -23,7 +35,7 @@ class InterdisciplinaryScopeRead(InterdisciplinaryScopeDraft):
     project_id: uuid.UUID
     version: int
     status: str
-    created_by: uuid.UUID
+    created_by: uuid.UUID | None
     confirmed_by: uuid.UUID | None
     confirmed_at: datetime | None
 
